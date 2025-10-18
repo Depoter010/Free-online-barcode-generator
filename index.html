@@ -1,0 +1,764 @@
+
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Barcode Label Generator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        /* --- New Excel-like Input Grid Styles --- */
+        .data-grid {
+            display: flex;
+            flex-direction: column;
+            border: 1px solid #ccc;
+            min-height: 150px; /* Reduced min-height */
+            /* HEIGHT REDUCED FROM 400px TO 300px as requested */
+            max-height: 300px; 
+            overflow-y: auto;
+            cursor: text;
+            background-color: white;
+        }
+        /* Individual Row */
+        .grid-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr 0.5fr;
+            border-bottom: 1px solid #eee;
+            min-height: 35px;
+        }
+        .grid-row:last-child {
+            border-bottom: none;
+        }
+        /* Individual Cell */
+        .grid-cell {
+            padding: 8px 12px;
+            border-right: 1px solid #eee;
+            word-break: break-all;
+            white-space: pre-wrap;
+            outline: none;
+        }
+        .grid-cell:focus {
+             box-shadow: inset 0 0 0 1px #4f46e5;
+        }
+        .grid-cell:last-child {
+            border-right: none;
+        }
+        /* Header Row */
+        .header-row {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            cursor: default;
+        }
+        .header-row .grid-cell {
+            font-weight: 700;
+            background-color: #e0f2fe;
+            color: #1e40af;
+        }
+        
+        /* --- Barcode Preview Styles --- */
+        .preview-label-cell {
+            width: 100%;
+            height: 100px;
+            min-height: 90px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 4px;
+            overflow: hidden;
+            box-sizing: border-box;
+            text-align: center;
+            font-size: 10px;
+            line-height: 1.2;
+            border: 1px solid #e5e7eb;
+            border-radius: 4px;
+            background-color: white;
+        }
+
+        /* --- Print Page Styles --- */
+        @media print {
+            body * {
+                visibility: hidden;
+            }
+            .print-section, .print-section * {
+                visibility: visible;
+            }
+            .print-section {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+            }
+            .no-print {
+                display: none !important;
+            }
+        }
+        
+        .print-page {
+            width: 210mm;
+            height: 297mm;
+            padding: 10mm;
+            box-sizing: border-box;
+            background-color: white;
+            page-break-after: always;
+        }
+        
+        .print-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0;
+            width: 100%;
+            /* Removed height: 100% from print-grid to ensure labels stack from top */
+        }
+        
+        .print-label {
+            width: 47.5mm;
+            height: 25mm;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 2mm;
+            overflow: hidden;
+            box-sizing: border-box;
+            text-align: center;
+            border: 1px dotted #ccc;
+        }
+        
+        .print-sku {
+            font-weight: 600;
+            font-size: 10px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 100%;
+            margin-bottom: 1mm;
+        }
+        
+        .print-barcode {
+            margin: 1mm 0;
+            max-width: 100%;
+        }
+        
+        .print-barcode-data {
+            font-size: 8px;
+            margin-top: 1mm;
+        }
+        
+        .sku-text {
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 100%;
+            margin-bottom: 2px;
+        }
+        
+        .barcode-svg {
+            margin: 1px 0;
+        }
+        
+        .preview-label-cell .barcode-svg {
+            width: 80% !important;
+            height: 30px !important;
+        }
+        
+        .barcode-data-text {
+            font-size: 7px;
+            margin-top: 2px;
+        }
+        
+        .preview-label-cell .barcode-data-text {
+            font-size: 8px;
+        }
+
+        #loadingOverlay {
+            background-color: rgba(255, 255, 255, 0.9);
+            z-index: 50;
+        }
+        
+        /* MODIFIED PREVIEW GRID - Now always 4 columns for A4 layout match */
+        .preview-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            border: 1px dashed #d1d5db;
+            padding: 16px;
+            border-radius: 8px;
+            background-color: white;
+        }
+        
+        /* Removed @media query for preview grid to keep it 4 columns universally */
+        
+        /* Print button styles */
+        .print-button {
+            background-color: #10b981;
+        }
+        
+        .print-button:hover {
+            background-color: #059669;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="max-w-4xl mx-auto bg-white p-6 md:p-8 rounded-xl shadow-2xl">
+        <p class="mb-6 text-gray-600 font-semibold text-lg">Barcode Label Generator</p>
+        <p class="mb-6 text-gray-600">
+
+        <div class="space-y-4">
+            
+            <div id="dataGridInput" contenteditable="true" 
+                class="data-grid border-2 border-indigo-300 rounded-lg focus-within:border-indigo-500 focus-within:ring focus-within:ring-indigo-200 text-sm font-mono">
+                
+                <div class="grid-row header-row">
+                    <div class="grid-cell">Barcode Data</div>
+                    <div class="grid-cell">SKU/Text</div>
+                    <div class="grid-cell">Quantity</div>
+                </div>
+                <div class="grid-row text-gray-500 placeholder-row">
+                    <div class="grid-cell" contenteditable="true">Paste Excel Data Here</div>
+                    <div class="grid-cell" contenteditable="true">...</div>
+                    <div class="grid-cell" contenteditable="true">...</div>
+                </div>
+            </div>
+
+            <div class="flex flex-col md:flex-row gap-4">
+                <button onclick="processDataAndDownload()" id="generateButton"
+                    class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg transition duration-200 shadow-lg flex items-center justify-center">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                    Generate and Download Barcodes (PDF)
+                </button>
+                <button onclick="openPrintPage()" id="printButton"
+                    class="flex-1 print-button hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg transition duration-200 shadow-lg flex items-center justify-center">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                    Open Print Page
+                </button>
+                <button onclick="clearData()" id="clearButton"
+                    class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-3 px-4 rounded-lg transition duration-200 shadow-sm flex items-center justify-center">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    Clear Data
+                </button>
+            </div>
+        </div>
+
+        <div id="messageBox" class="mt-4 p-3 bg-red-100 text-red-700 rounded-lg hidden"></div>
+        
+        <h2 class="text-xl font-semibold mt-8 mb-4 text-gray-700">Live Preview (First 44 Labels - A4 Layout)</h2>
+        <div id="previewContainer" class="min-h-[150px] bg-gray-50 border border-gray-200 rounded-lg p-4">
+             <p class="text-center text-gray-500 py-8">Paste data above to see a preview.</p>
+        </div>
+    </div>
+
+    <div id="loadingOverlay" class="fixed inset-0 flex items-center justify-center hidden">
+        <div class="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-indigo-500"></div>
+        <div class="ml-4 text-xl font-semibold text-indigo-700">Generating barcodes... Please wait</div>
+    </div>
+
+    <script>
+        // Global Constants
+        const MAX_LABELS_PER_PAGE = 44;
+
+        /**
+         * Wait function for exponential backoff or simple delay.
+         */
+        const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+        /**
+         * Shows a message in the message box.
+         */
+        function showMessage(message, type = 'error') {
+            const box = document.getElementById('messageBox');
+            box.textContent = message;
+            box.className = `mt-4 p-3 rounded-lg ${type === 'error' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`;
+            box.classList.remove('hidden');
+        }
+        
+        /**
+         * Clears the input grid and the preview area.
+         */
+        function clearData() {
+            const dataGridInput = document.getElementById('dataGridInput');
+            const previewContainer = document.getElementById('previewContainer');
+            const messageBox = document.getElementById('messageBox');
+
+            // HTML for the initial state of the grid
+            const initialPlaceholderHTML = `
+                <div class="grid-row header-row">
+                    <div class="grid-cell">Barcode Data</div>
+                    <div class="grid-cell">SKU/Text</div>
+                    <div class="grid-cell">Quantity</div>
+                </div>
+                <div class="grid-row text-gray-500 placeholder-row">
+                    <div class="grid-cell" contenteditable="true">Paste Excel Data Here</div>
+                    <div class="grid-cell" contenteditable="true">...</div>
+                    <div class="grid-cell" contenteditable="true">...</div>
+                </div>
+            `;
+            
+            // 1. Reset input grid
+            dataGridInput.innerHTML = initialPlaceholderHTML;
+            
+            // 2. Clear preview
+            previewContainer.innerHTML = '<p class="text-center text-gray-500 py-8">Paste data above to see a preview.</p>';
+
+            // 3. Hide message box
+            messageBox.classList.add('hidden');
+        }
+
+        /**
+         * Parses the structured HTML grid into a structured array.
+         * @returns {Array<Object>} Parsed data array: [{ barcodeData: string, sku: string, qty: number }]
+         */
+        function parseDataFromGrid() {
+            const gridRows = document.querySelectorAll('#dataGridInput .grid-row:not(.header-row)');
+            const parsedItems = [];
+
+            gridRows.forEach((row) => {
+                // Ensure we skip the initial placeholder row if it still exists
+                if (row.classList.contains('placeholder-row') && row.querySelector('.grid-cell').textContent.trim() === 'Paste Excel Data Here') {
+                    return;
+                }
+                
+                const cells = row.querySelectorAll('.grid-cell');
+                if (cells.length >= 3) {
+                    const barcodeData = cells[0].textContent.trim();
+                    const sku = cells[1].textContent.trim();
+                    const qtyStr = cells[2].textContent.trim();
+                    // Parse quantity carefully
+                    const qty = parseInt(qtyStr, 10);
+
+                    // Validate
+                    if (barcodeData && sku && !isNaN(qty) && qty > 0) {
+                        parsedItems.push({ barcodeData, sku, qty });
+                    } else if (barcodeData || sku || qtyStr) {
+                        // If any field has content, but data is invalid (e.g., qty is not a number)
+                        console.warn(`Skipping invalid row: Barcode=${barcodeData}, SKU=${sku}, Qty=${qtyStr}`);
+                    }
+                }
+            });
+            return parsedItems;
+        }
+
+        /**
+         * Creates a single label element (SKU, Barcode SVG/IMG, Barcode Data Text).
+         * @param {string} barcodeData - The data to encode in the barcode.
+         * @param {string} sku - The SKU/Text to display above the barcode.
+         * @param {boolean} isPreview - Flag to use preview styling/size.
+         * @returns {HTMLElement} The created label div.
+         */
+        function createLabelElement(barcodeData, sku, isPreview = false) {
+            const cell = document.createElement('div');
+            
+            if (isPreview) {
+                cell.className = 'preview-label-cell';
+            } else {
+                cell.className = 'print-label';
+            }
+
+            // 1. SKU/Text (Top)
+            const skuDiv = document.createElement('div');
+            skuDiv.className = isPreview ? 'sku-text' : 'print-sku';
+            skuDiv.textContent = sku;
+            cell.appendChild(skuDiv);
+
+            let dataDiv = null;
+            
+            // --- Barcode Generation (Code 128 is commonly used) ---
+            try {
+                const svgElement = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+                
+                if (isPreview) {
+                    svgElement.className = 'barcode-svg';
+                    svgElement.setAttribute('width', '100%');
+                    svgElement.setAttribute('height', '30');
+                } else {
+                    svgElement.className = 'print-barcode';
+                    svgElement.setAttribute('width', '100%');
+                    svgElement.setAttribute('height', '40');
+                }
+                
+                cell.appendChild(svgElement);
+                
+                JsBarcode(svgElement, barcodeData, {
+                    format: "CODE128",
+                    displayValue: false, 
+                    margin: 0,
+                    width: isPreview ? 1 : 1.5, 
+                    height: isPreview ? 25 : 35, 
+                    text: "" 
+                });
+
+                // 3. Barcode Data Text (Bottom) - common to both modes
+                dataDiv = document.createElement('div');
+                dataDiv.className = isPreview ? 'barcode-data-text' : 'print-barcode-data';
+                dataDiv.textContent = barcodeData;
+                cell.appendChild(dataDiv);
+                
+            } catch (e) {
+                // --- Error handling ---
+                skuDiv.textContent = 'Error: ' + sku;
+                
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'text-red-500 font-bold text-xs';
+                errorDiv.textContent = '❌ Barcode Error (Invalid Data)';
+                cell.appendChild(errorDiv);
+
+                dataDiv = document.createElement('div');
+                dataDiv.className = isPreview ? 'barcode-data-text' : 'print-barcode-data';
+                dataDiv.textContent = barcodeData;
+                cell.appendChild(dataDiv);
+
+                console.error(`Barcode generation failed for data: ${barcodeData}`, e);
+            }
+
+            return cell;
+        }
+
+        /**
+         * Converts raw tab-separated text into structured HTML rows for visual display.
+         * @param {string} rawText - Raw text copied from Excel.
+         * @returns {string} Structured HTML string for the grid body.
+         */
+        function renderStructuredInput(rawText) {
+            const lines = rawText.trim().split('\n').filter(line => line.trim() !== '');
+            let html = '';
+            
+            for (const line of lines) {
+                const parts = line.split('\t');
+                const barcodeData = parts[0] ? parts[0].trim() : '';
+                const sku = parts[1] ? parts[1].trim() : '';
+                const qty = parts[2] ? parts[2].trim() : '';
+                
+                // Construct the row with cells
+                html += `<div class="grid-row">
+                            <div class="grid-cell" contenteditable="true">${barcodeData}</div>
+                            <div class="grid-cell" contenteditable="true">${sku}</div>
+                            <div class="grid-cell" contenteditable="true">${qty}</div>
+                        </div>`;
+            }
+            return html;
+        }
+
+        /**
+         * Updates the visual preview with the first few generated barcodes.
+         */
+        function updatePreview() {
+            const parsedItems = parseDataFromGrid();
+            const previewContainer = document.getElementById('previewContainer');
+            previewContainer.innerHTML = '';
+            
+            if (parsedItems.length === 0) {
+                previewContainer.innerHTML = '<p class="text-center text-gray-500 py-8">Paste data above to see a preview.</p>';
+                return;
+            }
+
+            // MODIFIED: Show up to 44 labels in preview
+            const MAX_PREVIEW_LABELS = MAX_LABELS_PER_PAGE;
+            const allLabels = [];
+            let count = 0;
+            const totalQuantity = parsedItems.reduce((sum, item) => sum + item.qty, 0);
+
+            // Generate labels based on quantity, up to MAX_PREVIEW_LABELS
+            for (const item of parsedItems) {
+                for (let i = 0; i < item.qty; i++) {
+                    if (count >= MAX_PREVIEW_LABELS) break;
+                    allLabels.push({ barcodeData: item.barcodeData, sku: item.sku });
+                    count++;
+                }
+                if (count >= MAX_PREVIEW_LABELS) break;
+            }
+            
+            // Create a temporary grid for preview rendering
+            const previewGrid = document.createElement('div');
+            // MODIFIED: Use 4-column layout
+            previewGrid.className = 'preview-grid';
+
+            allLabels.forEach(label => {
+                const labelElement = createLabelElement(label.barcodeData, label.sku, true);
+                previewGrid.appendChild(labelElement);
+            });
+
+            previewContainer.appendChild(previewGrid);
+
+            // Add a note about total labels
+            if (allLabels.length < totalQuantity) {
+                const note = document.createElement('p');
+                note.className = 'mt-4 text-center text-sm text-gray-600';
+                note.textContent = `Showing first ${allLabels.length} labels for preview. Total labels to generate: ${totalQuantity}`;
+                previewContainer.appendChild(note);
+            } else {
+                const note = document.createElement('p');
+                note.className = 'mt-4 text-center text-sm text-gray-600';
+                note.textContent = `Showing all ${allLabels.length} labels in preview.`;
+                previewContainer.appendChild(note);
+            }
+        }
+
+        /**
+         * Handles the paste event to capture Excel data, structure it visually, and trigger the preview.
+         */
+        function handlePaste(e) {
+            e.preventDefault(); 
+            
+            const clipboardData = e.clipboardData || window.clipboardData;
+            const pastedText = clipboardData.getData('text/plain');
+
+            if (!pastedText) return;
+
+            // Generate structured HTML from the pasted text for visual display
+            const structuredHtmlBody = renderStructuredInput(pastedText);
+
+            const inputDiv = document.getElementById('dataGridInput');
+            const headerRow = document.querySelector('#dataGridInput .header-row').outerHTML;
+            
+            // Replace content (Header + Body)
+            inputDiv.innerHTML = headerRow + structuredHtmlBody;
+            
+            // Set focus to the last cell
+            const lastCell = inputDiv.querySelector('.grid-row:last-child .grid-cell:last-child');
+            if (lastCell) {
+                lastCell.focus();
+            }
+
+            // Update preview immediately after paste
+            updatePreview();
+        }
+
+        /**
+         * Opens a new window with a print-friendly page containing all barcodes
+         */
+        function openPrintPage() {
+            const parsedItems = parseDataFromGrid();
+
+            if (parsedItems.length === 0) {
+                showMessage('No valid data found. Please paste data or check if your data is correctly formatted (Barcode Data, SKU, Quantity).');
+                return;
+            }
+
+            // Create the full list of labels based on quantity
+            const allLabels = [];
+            for (const item of parsedItems) {
+                for (let i = 0; i < item.qty; i++) {
+                    allLabels.push({ barcodeData: item.barcodeData, sku: item.sku });
+                }
+            }
+            
+            const totalLabels = allLabels.length;
+            
+            // Create print page HTML
+            let printHTML = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Barcode Labels</title>
+                <style>
+                    body {
+                        margin: 0;
+                        padding: 0;
+                        font-family: Arial, sans-serif;
+                    }
+                    @media print {
+                        body {
+                            margin: 0;
+                            padding: 0;
+                        }
+                    }
+                    .print-page {
+                        width: 210mm;
+                        height: 297mm;
+                        padding: 10mm;
+                        box-sizing: border-box;
+                        background-color: white;
+                        page-break-after: always;
+                    }
+                    .print-grid {
+                        display: grid;
+                        grid-template-columns: repeat(4, 1fr);
+                        gap: 0;
+                        width: 100%;
+                        /* REMOVED: height: 100%; - This ensures items align to the top */
+                    }
+                    .print-label {
+                        width: 47.5mm;
+                        height: 25mm;
+                        display: flex;
+                        flex-direction: column;
+                        justify-content: center;
+                        align-items: center;
+                        padding: 2mm;
+                        overflow: hidden;
+                        box-sizing: border-box;
+                        text-align: center;
+                        border: 1px dotted #ccc;
+                    }
+                    .print-sku {
+                        font-weight: 600;
+                        font-size: 10px;
+                        white-space: nowrap;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                        max-width: 100%;
+                        margin-bottom: 1mm;
+                    }
+                    .print-barcode {
+                        margin: 1mm 0;
+                        max-width: 100%;
+                    }
+                    .print-barcode-data {
+                        font-size: 8px;
+                        margin-top: 1mm;
+                    }
+                    .no-print {
+                        display: none;
+                    }
+                    .print-header {
+                        text-align: center;
+                        margin-bottom: 10mm;
+                        padding: 5mm;
+                        background: #f3f4f6;
+                    }
+                    .print-controls {
+                        position: fixed;
+                        top: 10px;
+                        right: 10px;
+                        z-index: 1000;
+                    }
+                </style>
+                <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
+            </head>
+            <body>
+                <div class="print-controls no-print">
+                    <button onclick="window.print()" style="padding: 10px 20px; background: #10b981; color: white; border: none; border-radius: 5px; cursor: pointer; margin-right: 10px;">Print</button>
+                    <button onclick="window.close()" style="padding: 10px 20px; background: #ef4444; color: white; border: none; border-radius: 5px; cursor: pointer;">Close</button>
+                </div>
+                <div class="print-header no-print">
+                    <h1>Barcode Labels</h1>
+                    <p>Total Labels: ${totalLabels}</p>
+                    <p>Click the Print button above to print these labels</p>
+                </div>
+            `;
+            
+            let pageCount = 0;
+            let currentPageHTML = '';
+            
+            for (let i = 0; i < totalLabels; i++) {
+                const label = allLabels[i];
+                
+                // Start a new page if this is the first label or the MAX_LABELS_PER_PAGE limit is reached
+                if (i > 0 && i % MAX_LABELS_PER_PAGE === 0) {
+                    if (currentPageHTML) {
+                        // Close the previous grid and page
+                        printHTML += `<div class="print-page"><div class="print-grid">${currentPageHTML}</div></div>`;
+                    }
+                    pageCount++;
+                    currentPageHTML = '';
+                }
+
+                // Create the label HTML for print
+                currentPageHTML += `
+                    <div class="print-label">
+                        <div class="print-sku">${label.sku}</div>
+                        <svg class="print-barcode" id="barcode-${i}"></svg>
+                        <div class="print-barcode-data">${label.barcodeData}</div>
+                    </div>
+                `;
+            }
+            
+            // Add the last page
+            if (currentPageHTML) {
+                printHTML += `<div class="print-page"><div class="print-grid">${currentPageHTML}</div></div>`;
+            }
+            
+            printHTML += `
+                <script>
+                    // Generate barcodes after page loads
+                    window.onload = function() {
+                        const labels = ${JSON.stringify(allLabels)};
+                        labels.forEach((label, index) => {
+                            try {
+                                JsBarcode(document.getElementById('barcode-' + index), label.barcodeData, {
+                                    format: "CODE128",
+                                    displayValue: false,
+                                    margin: 0,
+                                    width: 1.5,
+                                    height: 35,
+                                    text: ""
+                                });
+                            } catch(e) {
+                                console.error('Barcode generation failed:', e);
+                            }
+                        });
+                    };
+                <\/script>
+            </body>
+            </html>
+            `;
+            
+            // Open print page in new window
+            const printWindow = window.open('', '_blank');
+            printWindow.document.write(printHTML);
+            printWindow.document.close();
+        }
+
+        /**
+         * Generates all required labels, organizes them into A4 pages, and initiates PDF download.
+         */
+        async function processDataAndDownload() {
+            document.getElementById('loadingOverlay').classList.remove('hidden');
+            document.getElementById('messageBox').classList.add('hidden');
+            
+            // Small delay to ensure loading overlay is visible
+            await wait(100);
+
+            const parsedItems = parseDataFromGrid();
+
+            if (parsedItems.length === 0) {
+                showMessage('No valid data found. Please paste data or check if your data is correctly formatted (Barcode Data, SKU, Quantity).');
+                document.getElementById('loadingOverlay').classList.add('hidden');
+                return;
+            }
+
+            try {
+                // Use the print functionality as a fallback
+                openPrintPage();
+                showMessage('Opened print page. Use the print button there to print your labels.', 'success');
+            } catch (error) {
+                console.error('Error:', error);
+                showMessage('An error occurred. Please try using the Print button instead.', 'error');
+            } finally {
+                document.getElementById('loadingOverlay').classList.add('hidden');
+            }
+        }
+        
+        // Setup listeners when the window loads
+        window.onload = () => {
+             const dataGridInput = document.getElementById('dataGridInput');
+             
+             // Listener for paste (Excel data parsing)
+             dataGridInput.addEventListener('paste', handlePaste);
+             
+             // Listener for manual input/edit (to update preview)
+             dataGridInput.addEventListener('input', updatePreview);
+             
+             // Add some test data for quick testing
+             setTimeout(() => {
+                 if (document.querySelector('.placeholder-row')) {
+                     const testData = `123456789012\tTest Product 1\t2\n987654321098\tTest Product 2\t1\n555555555555\tSample Item 3\t3`;
+                     const structuredHtmlBody = renderStructuredInput(testData);
+                     const headerRow = document.querySelector('#dataGridInput .header-row').outerHTML;
+                     dataGridInput.innerHTML = headerRow + structuredHtmlBody;
+                     updatePreview();
+                 }
+             }, 500);
+        };
+    </script>
+</body>
+</html>
